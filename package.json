@@ -1,0 +1,25 @@
+{
+  "name": "airbnb-analysis",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.26.1",
+    "@e2b/code-interpreter": "^0.0.8",
+    "@mendable/firecrawl-js": "^0.0.36"
+  },
+  "devDependencies": {
+    "@types/node": "^22.4.2",
+    "dotenv": "^16.4.5",
+    "prettier": "^3.3.3",
+    "tsx": "^4.17.0",
+    "typescript": "^5.5.4",
+    "zod": "^3.23.8"
+  }
+}
