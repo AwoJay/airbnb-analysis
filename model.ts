@@ -1,4 +1,6 @@
-import { Tool } from "@anthropic-ai/sdk/src/resources/beta/tools";
+// import { Tool } from "@anthropic-ai/sdk/src/resources/beta/tools";
+
+import { Tool } from "@anthropic-ai/sdk/resources/index.mjs";
 
 export const MODEL_NAME = "claude-3-opus-20240229";
 
