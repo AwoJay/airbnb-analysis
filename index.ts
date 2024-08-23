@@ -1,14 +1,14 @@
 import * as fs from "fs";
-
 import "dotenv/config";
 import { Buffer } from "buffer";
 import { scrapeAirbnb } from "./scraping";
-import Anthropic from "@anthropic-ai/sdk";
 import { codeInterpret } from "./codeInterpreter";
-import { MODEL_NAME, SYSTEM_PROMPT, tools } from "./model";
+import { MODEL_NAME, SYSTEM_PROMPT } from "./model";
 import { CodeInterpreter, Execution } from "@e2b/code-interpreter";
+import Anthropic from "@anthropic-ai/sdk";
 
 const anthropic = new Anthropic();
+
 /**
  * Chat with Claude to analyze the Airbnb data
  */
@@ -18,37 +18,37 @@ async function chat(
 ): Promise<Execution | undefined> {
   console.log("Waiting for Claude...");
 
-  const msg = await anthropic.beta.tools.messages.create({
+  // Use the appropriate method for creating a completion
+  const msg = await anthropic.completions.create({
     model: MODEL_NAME,
-    system: SYSTEM_PROMPT,
-    max_tokens: 4096,
-    messages: [{ role: "user", content: userMessage }],
-    tools,
+    prompt: `${SYSTEM_PROMPT}\n\nHuman: ${userMessage}\n\nAssistant:`,
+    max_tokens_to_sample: 4096,
+    stop_sequences: ["Human:"],
   });
 
-  console.log(
-    `\n${"=".repeat(50)}\nModel response: 
-    ${msg.content}\n${"=".repeat(50)}`
-  );
-  console.log(msg);
+  const responseContent = msg.completion;
 
-  if (msg.stop_reason === "tool_use") {
-    const toolBlock = msg.content.find((block) => block.type === "tool_use");
-    const toolName = toolBlock?.name ?? "";
-    const toolInput = toolBlock?.input ?? "";
+  console.log(`\n${"=".repeat(50)}\nModel response: 
+  ${responseContent}\n${"=".repeat(50)}`);
+
+  // Simulate tool use detection
+  const toolBlockMatch = responseContent.match(/```(\w+)\n([\s\S]*?)```/);
+  if (toolBlockMatch) {
+    const toolName = toolBlockMatch[1];
+    const toolInput = toolBlockMatch[2];
 
     console.log(
       `\n${"=".repeat(50)}\nUsing tool: 
       ${toolName}\n${"=".repeat(50)}`
     );
 
-    if (toolName === "execute_python") {
-      const code = toolInput.code;
-      return codeInterpret(codeInterpreter, code);
+    if (toolName === "python") {
+      return codeInterpret(codeInterpreter, toolInput);
     }
-    return undefined;
   }
+  return undefined;
 }
+
 /**
  * Main function to run the scraping and analysis
  */
@@ -87,7 +87,7 @@ async function run() {
   const userMessage = `
   Load the Airbnb prices data from the airbnb listing below and visualize
   the distribution of prices with a histogram. Listing data: ${pricesList}
-`;
+  `;
 
   const codeInterpreter = await CodeInterpreter.create();
   const codeOutput = await chat(codeInterpreter, userMessage);
