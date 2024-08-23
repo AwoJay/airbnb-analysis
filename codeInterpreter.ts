@@ -9,14 +9,7 @@ export async function codeInterpret(
     \n${code}\n${"=".repeat(50)}`
   );
 
-  const exec = await codeInterpreter.notebook.execCell(code, {
-    // You can stream logs from the code interpreter
-    // onStderr: (stderr: string) => console.log("\n[Code Interpreter stdout]", stderr),
-    // onStdout: (stdout: string) => console.log("\n[Code Interpreter stderr]", stdout),
-    //
-    // You can also stream additional results like charts, images, etc.
-    // onResult: ...
-  });
+  const exec = await codeInterpreter.notebook.execCell(code);
 
   if (exec.error) {
     console.log("[Code Interpreter error]", exec.error); // Runtime error

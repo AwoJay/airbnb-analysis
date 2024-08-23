@@ -2,7 +2,7 @@
 
 import { Tool } from "@anthropic-ai/sdk/resources/index.mjs";
 
-export const MODEL_NAME = "claude-3-opus-20240229";
+export const MODEL_NAME = "claude-3-sonnet-20240229";
 
 export const SYSTEM_PROMPT = `
 ## your job & context

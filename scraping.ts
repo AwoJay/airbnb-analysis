@@ -1,7 +1,6 @@
 import * as fs from "fs";
-import FirecrawlApp from "@mendable/firecrawl-js";
+import FirecrawlApp, { type Params } from "@mendable/firecrawl-js";
 import "dotenv/config";
-import { z } from "zod";
 
 export async function scrapeAirbnb() {
   try {
@@ -11,93 +10,67 @@ export async function scrapeAirbnb() {
     });
 
     // Define the URL to crawl
-    const listingsUrl = "https://www.airbnb.com/s/San-Francisco--CA--United-States/homes";
+    const listingsUrl =
+      "https://www.airbnb.com/s/San-Francisco--CA--United-States/homes";
     const baseUrl = "https://www.airbnb.com";
 
-    // Define schema to extract pagination links
-    const paginationSchema = z.object({
-      page_links: z
-        .array(
-          z.object({
-            link: z.string().url(),
-          })
-        )
-        .describe("Pagination links in the bottom of the page."),
-    });
+    // Define schema to extract listings (schemas are made with `JSON Schema`)
 
-    const params2 = {
-      pageOptions: {
-        onlyMainContent: false,
+    const schema = {
+      type: "object",
+      properties: {
+        listings: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              title: {
+                type: "string",
+              },
+              price_per_night: {
+                type: "number",
+              },
+              location: {
+                type: "string",
+              },
+              rating: {
+                type: "number",
+              },
+              reviews: {
+                type: "number",
+              },
+            },
+            required: ["title", "price_per_night", "location"],
+          },
+        },
       },
-      extractorOptions: {
-        extractionSchema: paginationSchema,
-      },
-      timeout: 50000, // Timeout for Airbnb's occasional stalling
+      required: ["listings"],
     };
 
-    // Start crawling to get pagination links
-    const linksData = await app.scrapeUrl(listingsUrl, params2);
-
-    // Check if linksData or linksData.data is undefined
-    if (!linksData || !linksData.data || !linksData.data["llm_extraction"]) {
-      throw new Error("Failed to retrieve pagination links data.");
-    }
-
-    const extractedData = linksData.data["llm_extraction"];
-
-    // Validate and process extracted pagination links
-    const paginationLinks = extractedData.page_links.map(
-      (link) => baseUrl + link.link
-    ) || [listingsUrl];  // Fallback to the main URL if no pagination links
-
-    // Define schema to extract listings
-    const schema = z.object({
-      listings: z
-        .array(
-          z.object({
-            title: z.string(),
-            price_per_night: z.number(),
-            location: z.string(),
-            rating: z.number().optional(),
-            reviews: z.number().optional(),
-          })
-        )
-        .describe("Airbnb listings in San Francisco"),
-    });
-
-    const params = {
+    const params: Params = {
       pageOptions: {
-        onlyMainContent: false,
+        waitFor: 10000,
       },
       extractorOptions: {
         extractionSchema: schema,
+        extractionPrompt:
+          "For each room listing in the page, add a new entry to the listings array which includes the title of the listing, the price per night, the location, the rating and the reviews (last two if available, but not required).",
       },
+      timeout: 50000,
     };
 
-    // Function to scrape a single URL
-    const scrapeListings = async (url: string) => {
-      const result = await app.scrapeUrl(url, params);
-      
-      // Check if result or result.data is undefined
-      if (!result || !result.data || !result.data["llm_extraction"]) {
-        console.error(`Failed to retrieve data for ${url}`);
-        return [];  // Return an empty array in case of error
-      }
+    const allListings = await app.scrapeUrl(listingsUrl, params);
 
-      return result.data["llm_extraction"].listings || [];
-    };
+    console.log(allListings.data?.llm_extraction?.listings);
 
-    // Scrape all pagination links in parallel
-    const listingsPromises = paginationLinks.map((link) => scrapeListings(link));
-    const listingsResults = await Promise.all(listingsPromises);
-
-    // Flatten the results
-    const allListings = listingsResults.flat();
+    if (allListings.data?.llm_extraction === undefined) {
+      throw new Error("LLM extraction failed");
+    }
 
     // Save the listings to a file
     fs.writeFileSync(
       "airbnb_listings.json",
-      JSON.stringify(allListings, null, 2)
+      JSON.stringify(allListings.data?.llm_extraction.listings, null, 2)
     );
 
     // Read the listings from the file (optional step)

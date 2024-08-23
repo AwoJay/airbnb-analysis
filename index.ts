@@ -19,34 +19,34 @@ async function chat(
   console.log("Waiting for Claude...");
 
   // Use the appropriate method for creating a completion
-  const msg = await anthropic.completions.create({
+  // This uses the Messages API, given the available means, using completions may require a higher plan and code refactoring
+  const msg = await anthropic.messages.create({
     model: MODEL_NAME,
-    prompt: `${SYSTEM_PROMPT}\n\nHuman: ${userMessage}\n\nAssistant:`,
-    max_tokens_to_sample: 4096,
-    stop_sequences: ["Human:"],
+    // prompt: `${SYSTEM_PROMPT}\n\nHuman: ${userMessage}\n\nAssistant:`,
+    messages: [
+      {
+        role: "user",
+        content: `${SYSTEM_PROMPT}\n\n ${userMessage}`,
+      },
+    ],
+    max_tokens: 4096,
+    // stop_sequences: ["Human:"],
   });
 
-  const responseContent = msg.completion;
+  const responseContent = msg.content[0];
 
-  console.log(`\n${"=".repeat(50)}\nModel response: 
-  ${responseContent}\n${"=".repeat(50)}`);
+  if (responseContent.type !== "text") return undefined;
 
-  // Simulate tool use detection
-  const toolBlockMatch = responseContent.match(/```(\w+)\n([\s\S]*?)```/);
-  if (toolBlockMatch) {
-    const toolName = toolBlockMatch[1];
-    const toolInput = toolBlockMatch[2];
+  const matchedContent = responseContent.text.match(/```python\n([\s\S]*?)```/);
 
-    console.log(
-      `\n${"=".repeat(50)}\nUsing tool: 
-      ${toolName}\n${"=".repeat(50)}`
-    );
+  if (matchedContent === null) return undefined;
 
-    if (toolName === "python") {
-      return codeInterpret(codeInterpreter, toolInput);
-    }
-  }
-  return undefined;
+  const code = matchedContent[0].replace("```python\n", "").replace("```", "");
+
+  console.log(`\n${"=".repeat(50)}\nModel response:
+  ${code}\n${"=".repeat(50)}`);
+
+  return codeInterpret(codeInterpreter, code);
 }
 
 /**
@@ -86,7 +86,9 @@ async function run() {
 
   const userMessage = `
   Load the Airbnb prices data from the airbnb listing below and visualize
-  the distribution of prices with a histogram. Listing data: ${pricesList}
+  the distribution of prices with a histogram.
+  The title of the histogram must be: "Distribution of Airbnb Prices in San Francisco". The xlabel must be "Price per Night ($)". The ylabel must be: "Number of Listings". Make sure that the ylabel is not float numbers but rather integers.
+  Listing data: ${pricesList}
   `;
 
   const codeInterpreter = await CodeInterpreter.create();
