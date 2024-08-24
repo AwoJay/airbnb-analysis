@@ -1,0 +1,414 @@
+Launch Week I is coming Aug 26-30! See the teaser 👀
+
+Skip to content
+🔥 Firecrawl
+Playground
+Docs
+Pricing
+Blog
+Beta Features
+Dashboard
+Sign out
+9.2k
+May 23, 2024
+
+•
+
+Nicolas Camara image
+Nicolas Camara
+Scrape and Analyze Airbnb Data with Firecrawl and E2B
+Scrape and Analyze Airbnb Data with Firecrawl and E2B image
+This cookbook demonstrates how to scrape Airbnb data and analyze it using Firecrawl and the Code Interpreter SDK from E2B.
+
+Feel free to clone the Github Repository or follow along with the steps below.
+
+Prerequisites
+Node.js installed on your machine
+Get E2B API key
+Get Firecrawl API key
+Get Anthropic API key
+Setup
+Start by creating a new directory and initializing a new Node.js typescript project:
+
+mkdir airbnb-analysis
+cd airbnb-analysis 
+npm init -y
+Next, install the required dependencies:
+
+npm install @anthropic-ai/sdk @e2b/code-interpreter @mendable/firecrawl-js 
+And dev dependencies:
+
+npm install --save-dev @types/node prettier tsx typescript dotenv zod
+Create a .env file
+Create a .env file in the root of your project and add the following environment variables:
+
+# TODO: Get your E2B API key from https://e2b.dev/docs
+E2B_API_KEY=""
+
+# TODO: Get your Firecrawl API key from https://firecrawl.dev
+FIRECRAWL_API_KEY=""
+
+# TODO: Get your Anthropic API key from https://anthropic.com
+ANTHROPIC_API_KEY=""
+Scrape Airbnb data with Firecrawl
+Create a new file scraping.ts.
+
+Creating the scraping function
+import * as fs from 'fs';
+import FirecrawlApp from '@mendable/firecrawl-js';
+import 'dotenv/config';
+import { config } from 'dotenv';
+import { z } from 'zod';
+Let’s define our scrapeAirbnb function which uses Firecrawl to scrape Airbnb listings. We will use Firecrawl’s LLM Extract to try to get the pagination links and then scrape each page in parallel to get the listings. We will save to a JSON file so we can analyze it later and not have to re-scrape.
+export async function scrapeAirbnb() {
+  try {
+    // Initialize the FirecrawlApp with your API key
+    const app = new FirecrawlApp({ 
+      apiKey: process.env.FIRECRAWL_API_KEY 
+    })
+
+    // Define the URL to crawl
+    const listingsUrl =
+    'https://www.airbnb.com/s/San-Francisco--CA--United-States/homes'
+
+    const baseUrl = 'https://www.airbnb.com'
+    // Define schema to extract pagination links
+    const paginationSchema = z.object({
+      page_links: z
+        .array(
+          z.object({
+            link: z.string(),
+          })
+        )
+        .describe('Pagination links in the bottom of the page.'),
+    })
+
+    const params2 = {
+      pageOptions: {
+        onlyMainContent: false,
+      },
+      extractorOptions: { 
+        extractionSchema: paginationSchema 
+      },
+      timeout: 50000, // if needed, sometimes airbnb stalls...
+    }
+
+    // Start crawling to get pagination links
+    const linksData = await app.scrapeUrl(listingsUrl, params2)
+    console.log(linksData.data['llm_extraction'])
+
+    let paginationLinks = 
+      linksData.data['llm_extraction']
+      .page_links
+      .map(
+        (link) => baseUrl + link.link
+      )
+
+    // Just in case is not able to get the pagination links
+    if (paginationLinks.length === 0) {
+      paginationLinks = [listingsUrl]
+    }
+
+    // Define schema to extract listings
+    const schema = z.object({
+      listings: z
+        .array(
+          z.object({
+            title: z.string(),
+            price_per_night: z.number(),
+            location: z.string(),
+            rating: z.number().optional(),
+            reviews: z.number().optional(),
+          })
+        )
+        .describe('Airbnb listings in San Francisco'),
+    })
+
+    const params = {
+      pageOptions: {
+        onlyMainContent: false,
+      },
+      extractorOptions: { 
+        extractionSchema: schema,
+      },
+    }
+
+    // Function to scrape a single URL
+    const scrapeListings = async (url) => {
+      const result = await app.scrapeUrl(url, params)
+      return result.data['llm_extraction'].listings
+    }
+
+    // Scrape all pagination links in parallel
+    const listingsPromises = paginationLinks.map(
+      (link) => scrapeListings(link)
+    )
+    const listingsResults = await Promise.all(listingsPromises)
+
+    // Flatten the results
+    const allListings = listingsResults.flat()
+
+    // Save the listings to a file
+    fs.writeFileSync(
+      'airbnb_listings.json',
+      JSON.stringify(allListings, null, 2)
+    )
+    // Read the listings from the file
+    const listingsData = fs.readFileSync(
+      'airbnb_listings.json',
+      'utf8'
+    )
+    return listingsData
+  } catch (error) {
+    console.error('An error occurred:', error.message)
+  }
+}
+Creating the code interpreter
+Let’s now prepare our code interepreter to analyze the data. Create a new file codeInterpreter.ts.
+
+This is where we will use the E2B Code Interpreter SDK to safely run the code that the LLM will generate and get its output.
+
+import { CodeInterpreter } from '@e2b/code-interpreter'
+
+export async function codeInterpret(
+  codeInterpreter: CodeInterpreter,
+  code: string
+) {
+  console.log(
+    `\n${'='.repeat(50)}\n> Running following AI-generated code:
+    \n${code}\n${'='.repeat(50)}`
+  )
+
+  const exec = await codeInterpreter.notebook.execCell(code, {
+    // You can stream logs from the code interpreter
+    // onStderr: (stderr: string) => console.log("\n[Code Interpreter stdout]", stderr),
+    // onStdout: (stdout: string) => console.log("\n[Code Interpreter stderr]", stdout),
+    //
+    // You can also stream additional results like charts, images, etc.
+    // onResult: ...
+  })
+
+  if (exec.error) {
+    console.log('[Code Interpreter error]', exec.error) // Runtime error
+    return undefined
+  }
+
+  return exec
+}
+Preparing the model prompt and tool execution
+Create a file called model.ts that will contain the prompts, model names and the tools for execution.
+
+import { Tool } from '@anthropic-ai/sdk/src/resources/beta/tools'
+
+export const MODEL_NAME = 'claude-3-opus-20240229'
+
+export const SYSTEM_PROMPT = `
+## your job & context
+you are a python data scientist. you are given tasks to complete and you run python code to solve them.
+- the python code runs in jupyter notebook.
+- every time you call \`execute_python\` tool, the python code is executed in a separate cell. it's okay to multiple calls to \`execute_python\`.
+- display visualizations using matplotlib or any other visualization library directly in the notebook. don't worry about saving the visualizations to a file.
+- you have access to the internet and can make api requests.
+- you also have access to the filesystem and can read/write files.
+- you can install any pip package (if it exists) if you need to but the usual packages for data analysis are already preinstalled.
+- you can run any python code you want, everything is running in a secure sandbox environment.
+`
+
+export const tools: Tool[] = [
+  {
+    name: 'execute_python',
+    description:
+      'Execute python code in a Jupyter notebook cell and returns any result, stdout, stderr, display_data, and error.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        code: {
+          type: 'string',
+          description: 'The python code to execute in a single cell.',
+        },
+      },
+      required: ['code'],
+    },
+  },
+]
+Putting it all together
+Create a file index.ts to run the scraping and analysis. Here we will load the scraped data, send it to the LLM model, and then interpret the code generated by the model.
+
+import * as fs from 'fs'
+
+import 'dotenv/config'
+import { CodeInterpreter, Execution } from '@e2b/code-interpreter'
+import Anthropic from '@anthropic-ai/sdk'
+import { Buffer } from 'buffer'
+
+import { MODEL_NAME, SYSTEM_PROMPT, tools } from './model'
+
+import { codeInterpret } from './codeInterpreter'
+import { scrapeAirbnb } from './scraping'
+
+const anthropic = new Anthropic()
+/**
+ * Chat with Claude to analyze the Airbnb data
+ */
+async function chat(
+  codeInterpreter: CodeInterpreter,
+  userMessage: string
+): Promise<Execution | undefined> {
+  console.log('Waiting for Claude...')
+
+  const msg = await anthropic.beta.tools.messages.create({
+    model: MODEL_NAME,
+    system: SYSTEM_PROMPT,
+    max_tokens: 4096,
+    messages: [{ role: 'user', content: userMessage }],
+    tools,
+  })
+
+  console.log(
+    `\n${'='.repeat(50)}\nModel response: 
+    ${msg.content}\n${'='.repeat(50)}`
+  )
+  console.log(msg)
+
+  if (msg.stop_reason === 'tool_use') {
+    const toolBlock = msg.content.find(
+        (block) => block.type === 'tool_use')
+    const toolName = toolBlock?.name ?? ''
+    const toolInput = toolBlock?.input ?? ''
+
+    console.log(
+      `\n${'='.repeat(50)}\nUsing tool: 
+      ${toolName}\n${'='.repeat(50)}`
+    )
+
+    if (toolName === 'execute_python') {
+      const code = toolInput.code
+      return codeInterpret(codeInterpreter, code)
+    }
+    return undefined
+  }
+}
+/**
+ * Main function to run the scraping and analysis
+ */
+async function run() {
+  // Load the Airbnb prices data from the JSON file
+  let data
+  const readDataFromFile = () => {
+    try {
+      return fs.readFileSync('airbnb_listings.json', 'utf8')
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        console.log('File not found, scraping data...')
+        return null
+      } else {
+        throw err
+      }
+    }
+  }
+
+  const fetchData = async () => {
+    data = readDataFromFile()
+    if (!data || data.trim() === '[]') {
+      console.log('File is empty or contains an empty list, scraping data...')
+      data = await scrapeAirbnb()
+    }
+  }
+
+  await fetchData()
+
+  // Parse the JSON data
+  const prices = JSON.parse(data)
+
+  // Convert prices array to a string representation of a Python list
+  const pricesList = JSON.stringify(prices)
+
+  const userMessage = `
+  Load the Airbnb prices data from the airbnb listing below and visualize
+  the distribution of prices with a histogram. Listing data: ${pricesList}
+`
+
+  const codeInterpreter = await CodeInterpreter.create()
+  const codeOutput = await chat(codeInterpreter, 
+  userMessage)
+  if (!codeOutput) {
+    console.log('No code output')
+    return
+  }
+
+  const logs = codeOutput.logs
+  console.log(logs)
+
+  if (codeOutput.results.length == 0) {
+    console.log('No results')
+    return
+  }
+
+  const firstResult = codeOutput.results[0]
+  console.log(firstResult.text)
+
+  if (firstResult.png) {
+    const pngData = Buffer.from(firstResult.png, 
+    'base64')
+    const filename = 'airbnb_prices_chart.png'
+    fs.writeFileSync(filename, pngData)
+    console.log(`✅ Saved chart to ${filename}`)
+  }
+
+  await codeInterpreter.close()
+}
+
+run()
+Running the code
+Run the code with:
+
+npm run start
+Results
+At the end you should get a histogram of the Airbnb prices in San Francisco saved as airbnb_prices_chart.png.
+
+Airbnb Prices Chart
+
+That’s it! You have successfully scraped Airbnb data and analyzed it using Firecrawl and E2B’s Code Interpreter SDK. Feel free to experiment with different models and prompts to get more insights from the data.
+
+🔥
+Ready to Build?
+Start scraping web data for your AI apps today.
+No credit card needed.
+
+Get Started
+Talk to us
+About the Author
+Nicolas Camara image
+Nicolas Camara
+@nickscamara_
+Nicolas Camara is the Chief Technology Officer (CTO) at Firecrawl. He previously built and scaled Mendable, one of the pioneering "chat with your documents" apps, which had major Fortune 500 customers like Snapchat, Coinbase, and MongoDB. Prior to that, Nicolas built SideGuide, the first code-learning tool inside VS Code, and grew a community of 50,000 users. Nicolas studied Computer Science and has over 10 years of experience in building software.
+
+More articles by Nicolas Camara
+Extract website data using LLMs
+
+Learn how to use Firecrawl and Groq to extract structured data from a web page in a few lines of code.
+
+Firecrawl x Dify.AI: Add web data to your RAG applications
+
+Learn how Firecrawl integrates with Dify.AI to provide web data to AI applications.
+
+Build a 'Chat with website' using Groq Llama 3
+
+Learn how to use Firecrawl, Groq Llama 3, and Langchain to build a 'Chat with your website' bot.
+
+Scrape and Analyze Airbnb Data with Firecrawl and E2B
+
+Learn how to scrape and analyze Airbnb data using Firecrawl and E2B in a few lines of code.
+
+Firecrawl June 2024 Updates
+
+Discover the latest features, integrations, and improvements in Firecrawl for June 2024.
+
+🔥
+© A product by Mendable.ai - All rights reserved.
+StatusStatusTerms of ServiceTerms of ServicePrivacy PolicyPrivacy Policy
+Twitter
+GitHub
+Discord
+Backed byY Combinator Logo
+SOC 2 Type II
